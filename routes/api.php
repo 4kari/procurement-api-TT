@@ -1,8 +1,9 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
-use App\Http\Controllers\Api\RequestController;
 use App\Http\Controllers\Api\ReportController;
+use App\Http\Controllers\Api\RequestController;
+use App\Http\Controllers\Api\VendorController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -74,5 +75,17 @@ Route::prefix('v1')->group(function () {
                 Route::get('lead-time',        [ReportController::class, 'leadTime']);
             });
 
+        // Vendors — hanya Purchasing, Manager, Admin yang bisa CRUD
+        // semua role bisa GET (untuk dropdown saat procure)
+        Route::get('vendors',       [VendorController::class, 'index']);
+        Route::get('vendors/{id}',  [VendorController::class, 'show']);
+
+        // Hanya Purchasing ke atas yang bisa tambah/edit/hapus vendor
+        Route::middleware('role:PURCHASING,PURCHASING_MANAGER,ADMIN')->group(function () {
+            Route::post('vendors',          [VendorController::class, 'store']);
+            Route::put('vendors/{id}',      [VendorController::class, 'update']);
+            Route::delete('vendors/{id}',   [VendorController::class, 'destroy']);
+        });
+        
     });
 });
