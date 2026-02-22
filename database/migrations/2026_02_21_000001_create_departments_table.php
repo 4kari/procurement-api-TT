@@ -12,6 +12,11 @@ return new class extends Migration
         // ── PostgreSQL Extension ──────────────────────────────────────────────
         DB::statement('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"');
 
+
+        DB::statement('DROP TYPE IF EXISTS request_status CASCADE');
+        DB::statement('DROP TYPE IF EXISTS approval_action CASCADE');
+        DB::statement('DROP TYPE IF EXISTS procurement_status CASCADE');
+        DB::statement('DROP TYPE IF EXISTS item_category CASCADE');
         // ── ENUM Types (dibuat sekali di migration pertama) ───────────────────
         DB::statement("CREATE TYPE request_status AS ENUM (
             'DRAFT', 'SUBMITTED', 'VERIFIED', 'APPROVED',

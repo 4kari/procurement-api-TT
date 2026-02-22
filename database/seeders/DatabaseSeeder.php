@@ -29,6 +29,7 @@ class DatabaseSeeder extends Seeder
 
         // ── 2. Users (satu per role) ──────────────────────────────────────────
         $admin = User::create([
+            'name'          => 'Administrator',
             'department_id' => $depts['IT']->id,
             'employee_code' => 'EMP-0001',
             'email'         => 'admin@procurement.local',
@@ -37,6 +38,7 @@ class DatabaseSeeder extends Seeder
         ]);
 
         $purchasing = User::create([
+            'name'          => 'Staff Purchasing',
             'department_id' => $depts['IT']->id,
             'employee_code' => 'EMP-0002',
             'email'         => 'purchasing@procurement.local',
@@ -45,6 +47,7 @@ class DatabaseSeeder extends Seeder
         ]);
 
         $manager = User::create([
+            'name'          => 'Manager',
             'department_id' => $depts['IT']->id,
             'employee_code' => 'EMP-0003',
             'email'         => 'manager@procurement.local',
@@ -53,6 +56,7 @@ class DatabaseSeeder extends Seeder
         ]);
 
         $warehouse = User::create([
+            'name'          => 'Warehouse',
             'department_id' => $depts['OPS']->id,
             'employee_code' => 'EMP-0004',
             'email'         => 'warehouse@procurement.local',
@@ -61,6 +65,7 @@ class DatabaseSeeder extends Seeder
         ]);
 
         $employee = User::create([
+            'name'          => 'Karyawan',
             'department_id' => $depts['FIN']->id,
             'employee_code' => 'EMP-0005',
             'email'         => 'employee@procurement.local',
@@ -75,6 +80,7 @@ class DatabaseSeeder extends Seeder
             ['code' => 'EMP-0008', 'dept' => 'OPS', 'email' => 'emp8@procurement.local'],
         ] as $e) {
             User::create([
+                'name'          => $e['code'],
                 'department_id' => $depts[$e['dept']]->id,
                 'employee_code' => $e['code'],
                 'email'         => $e['email'],

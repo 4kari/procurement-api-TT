@@ -20,7 +20,7 @@ Route::prefix('v1')->group(function () {
     });
 
     // ── Authenticated routes ─────────────────────────────────
-    Route::middleware('auth.token')->group(function () {
+    Route::middleware('auth:sanctum')->group(function () {
 
         Route::prefix('auth')->group(function () {
             Route::post('logout', [AuthController::class, 'logout']);
@@ -73,5 +73,6 @@ Route::prefix('v1')->group(function () {
                 Route::get('category-per-month', [ReportController::class, 'categoryPerMonth']);
                 Route::get('lead-time',        [ReportController::class, 'leadTime']);
             });
+
     });
 });

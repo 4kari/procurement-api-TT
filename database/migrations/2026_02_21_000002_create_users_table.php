@@ -67,7 +67,7 @@ return new class extends Migration
         // Plaintext hanya dikembalikan sekali saat createToken() dipanggil
         Schema::create('personal_access_tokens', function (Blueprint $table) {
             $table->id();                            // BIGINT autoincrement — Sanctum default
-            $table->morphs('tokenable');             // tokenable_type + tokenable_id (polymorphic → users)
+            $table->uuidMorphs('tokenable');         // tokenable_type + tokenable_id (polymorphic → users)
             $table->string('name');
             $table->string('token', 64)->unique();   // SHA-256 hash (64 hex chars)
             $table->text('abilities')->nullable();

@@ -276,7 +276,8 @@ return new class extends Migration
             SELECT
                 r.id,
                 r.request_number,
-                u.name                                                          AS requester_name,
+                u.employee_code                                                 AS requester_code,
+                u.email                                                         AS requester_email,
                 d.name                                                          AS department_name,
                 r.title,
                 r.status,
@@ -293,7 +294,7 @@ return new class extends Migration
             JOIN departments d  ON d.id = r.department_id
             LEFT JOIN request_items ri ON ri.request_id = r.id
             WHERE r.deleted_at IS NULL
-            GROUP BY r.id, u.name, d.name
+            GROUP BY r.id, u.employee_code, u.email, d.name
         ");
     }
 

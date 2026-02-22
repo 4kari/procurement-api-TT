@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class StatusHistory extends Model
 {
+    protected $table = 'status_history';
     use HasUuids;
 
     protected $keyType     = 'string';

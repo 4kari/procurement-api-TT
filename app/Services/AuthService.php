@@ -2,7 +2,7 @@
 
 namespace App\Services;
 
-use App\Models\PersonalAccessToken;
+use Laravel\Sanctum\PersonalAccessToken;
 use App\Models\User;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Support\Facades\Hash;
@@ -19,9 +19,10 @@ class AuthService
         $user = User::where('email', $email)
                     ->where('is_active', true)
                     ->first();
-
-        if (!$user || !Hash::check($password, $user->password_hash)) {
-            throw new AuthenticationException('Invalid credentials.');
+        if (!$user || !Hash::check($password, $user->password)) {
+            throw ValidationException::withMessages([
+                'email' => ['Email atau password salah.'],
+            ]);
         }
 
         $user->update(['last_login_at' => now()]);
@@ -29,43 +30,38 @@ class AuthService
         $plaintext = Str::random(60);
         $hash      = hash('sha256', $plaintext);
 
-        PersonalAccessToken::create([
-            'user_id'    => $user->id,
-            'token_hash' => $hash,
-            'name'       => 'login',
-            'abilities'  => ['*'],
-            'expires_at' => now()->addDays(30),
-        ]);
+        $user->update(['last_login_at' => now()]);
+        $token = $user->createToken('login', ['*'], now()->addDays(30));
 
-        return [$user, $plaintext];
+        return [$user, $token->plainTextToken];
     }
 
     /**
      * Validate a bearer token. Returns the authenticated user.
      */
-    public function authenticate(string $plaintext): User
-    {
-        $hash  = hash('sha256', $plaintext);
-        $token = PersonalAccessToken::where('token_hash', $hash)
-                    ->whereNull('expires_at')
-                    ->orWhere('expires_at', '>', now())
-                    ->first();
+    // public function authenticate(string $plaintext): User
+    // {
+    //     $hash  = hash('sha256', $plaintext);
+    //     $token = PersonalAccessToken::where('token_hash', $hash)
+    //                 ->whereNull('expires_at')
+    //                 ->orWhere('expires_at', '>', now())
+    //                 ->first();
 
-        if (!$token || $token->isExpired()) {
-            throw new AuthenticationException('Token is invalid or expired.');
-        }
+    //     if (!$token || $token->isExpired()) {
+    //         throw new AuthenticationException('Token is invalid or expired.');
+    //     }
 
-        $token->update(['last_used' => now()]);
+    //     $token->update(['last_used' => now()]);
 
-        return $token->user;
-    }
+    //     return $token->user;
+    // }
 
     /**
      * Revoke the current token (logout).
      */
-    public function logout(string $plaintext): void
-    {
-        $hash = hash('sha256', $plaintext);
-        PersonalAccessToken::where('token_hash', $hash)->delete();
-    }
+    // public function logout(string $plaintext): void
+    // {
+    //     $hash = hash('sha256', $plaintext);
+    //     PersonalAccessToken::where('token_hash', $hash)->delete();
+    // }
 }
