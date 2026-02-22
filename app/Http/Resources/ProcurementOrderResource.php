@@ -18,7 +18,7 @@ class ProcurementOrderResource extends JsonResource
             'ordered_at'   => $this->ordered_at?->toISOString(),
             'received_at'  => $this->received_at?->toISOString(),
             'notes'        => $this->notes,
-            'created_at'   => $this->created_at->toISOString(),
+            'created_at'   => $this->created_at?->toISOString(),
             'vendor'       => $this->whenLoaded('vendor', fn() => [
                 'id'   => $this->vendor->id,
                 'name' => $this->vendor->name,

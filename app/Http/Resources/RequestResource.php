@@ -20,7 +20,7 @@ class RequestResource extends JsonResource
             'version'        => $this->version,
             'submitted_at'   => $this->submitted_at?->toISOString(),
             'completed_at'   => $this->completed_at?->toISOString(),
-            'created_at'     => $this->created_at->toISOString(),
+            'created_at'     => $this->created_at?->toISOString(),
 
             // Related (loaded conditionally)
             'requester'      => $this->whenLoaded('requester', fn() => [
