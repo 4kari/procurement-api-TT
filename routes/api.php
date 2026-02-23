@@ -63,6 +63,12 @@ Route::prefix('v1')->group(function () {
             // POST /requests/{id}/procure      — PURCHASING
             Route::post('/{id}/procure', [RequestController::class, 'procure'])
                 ->middleware('role:PURCHASING');
+
+            // Warehouse only — receive dan complete
+            Route::middleware('role:WAREHOUSE,ADMIN')->group(function () {
+                Route::post('/{id}/receive', [RequestController::class, 'receive']);
+                Route::post('/{id}/complete',[RequestController::class, 'complete']);
+            });
         });
 
         // ── Reports ───────────────────────────────────────────

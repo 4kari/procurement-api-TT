@@ -6,21 +6,22 @@ use App\Events\RequestStatusChanged;
 use App\Models\Approval;
 use App\Models\ProcurementOrder;
 use App\Models\ProcurementOrderItem;
-use App\Models\Request;
+// use App\Models\Request;
 use App\Models\Stock;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 use Symfony\Component\HttpKernel\Exception\UnprocessableEntityHttpException;
+use App\Models\Request as ProcurementRequest;
 
 class RequestService
 {
     // ── Create ────────────────────────────────────────────────
-    public function create(User $requester, array $data): Request
+    public function create(User $requester, array $data): ProcurementRequest
     {
         return DB::transaction(function () use ($requester, $data) {
-            $request = Request::create([
+            $request = ProcurementRequest::create([
                 'request_number' => $this->generateNumber(),
                 'requester_id'   => $requester->id,
                 'department_id'  => $requester->department_id,
@@ -29,7 +30,8 @@ class RequestService
                 'notes'          => $data['notes'] ?? null,
                 'priority'       => $data['priority'] ?? 2,
                 'required_date'  => $data['required_date'] ?? null,
-                'status'         => Request::STATUS_DRAFT,
+                'status'         => ProcurementRequest::STATUS_DRAFT,
+                'version'        => '1',
             ]);
 
             foreach ($data['items'] as $item) {
@@ -49,10 +51,10 @@ class RequestService
     }
 
     // ── Submit ────────────────────────────────────────────────
-    public function submit(Request $request, User $actor, int $version): Request
+    public function submit(ProcurementRequest $request, User $actor, int $version): ProcurementRequest
     {
         $this->assertVersion($request, $version);
-        $this->assertTransition($request, Request::STATUS_SUBMITTED);
+        $this->assertTransition($request, ProcurementRequest::STATUS_SUBMITTED);
 
         return DB::transaction(function () use ($request, $actor) {
             $this->setCurrentUser($actor);
@@ -65,21 +67,21 @@ class RequestService
             ]);
 
             $request->update([
-                'status'       => Request::STATUS_SUBMITTED,
+                'status'       => ProcurementRequest::STATUS_SUBMITTED,
                 'submitted_at' => now(),
             ]);
 
-            event(new RequestStatusChanged($request, Request::STATUS_DRAFT, Request::STATUS_SUBMITTED, $actor));
+            event(new RequestStatusChanged($request, ProcurementRequest::STATUS_DRAFT, ProcurementRequest::STATUS_SUBMITTED, $actor));
 
             return $request->fresh();
         });
     }
 
     // ── Verify (Purchasing step) ──────────────────────────────
-    public function verify(Request $request, User $actor, array $data): Request
+    public function verify(ProcurementRequest $request, User $actor, array $data): ProcurementRequest
     {
         $this->assertVersion($request, $data['version']);
-        $this->assertTransition($request, Request::STATUS_VERIFIED);
+        $this->assertTransition($request, ProcurementRequest::STATUS_VERIFIED);
 
         return DB::transaction(function () use ($request, $actor, $data) {
             $this->setCurrentUser($actor);
@@ -99,47 +101,98 @@ class RequestService
                 'step'        => Approval::STEP_APPROVE,
             ]);
 
-            $request->update(['status' => Request::STATUS_VERIFIED]);
-            event(new RequestStatusChanged($request, Request::STATUS_SUBMITTED, Request::STATUS_VERIFIED, $actor));
+            $request->update(['status' => ProcurementRequest::STATUS_VERIFIED]);
+            event(new RequestStatusChanged($request, ProcurementRequest::STATUS_SUBMITTED, ProcurementRequest::STATUS_VERIFIED, $actor));
 
             return $request->fresh();
         });
     }
 
     // ── Approve (Manager step) ────────────────────────────────
-    public function approve(Request $request, User $actor, array $data): Request
+    public function approve(ProcurementRequest $request, User $actor, array $data): ProcurementRequest
     {
-        $this->assertVersion($request, $data['version']);
-        $this->assertTransition($request, Request::STATUS_APPROVED);
+        // 1. Cek optimistic lock
+        if ($request->version !== $data['version']) {
+            throw new ConflictHttpException(
+                'Data telah diubah. Silakan refresh dan coba lagi.'
+            );
+        }
 
-        return DB::transaction(function () use ($request, $actor, $data) {
+        // 2. Cek transisi status valid
+        if (!$request->canTransitionTo(ProcurementRequest::STATUS_APPROVED)) {
+            throw new UnprocessableEntityHttpException(
+                "Tidak bisa approve dari status {$request->status}. Status harus VERIFIED."
+            );
+        }
+
+        // 3. Simpan approval dan ubah status ke APPROVED
+        DB::transaction(function () use ($request, $actor, $data) {
             $this->setCurrentUser($actor);
 
-            $approval = $this->findOrFailPendingApproval($request, Approval::STEP_APPROVE);
-            $approval->update([
-                'action'   => Approval::ACTION_APPROVE,
-                'notes'    => $data['notes'] ?? null,
-                'acted_at' => now(),
+            $request->update([
+                'status' => ProcurementRequest::STATUS_APPROVED,
             ]);
+            $existingApproval = Approval::where('request_id', $request->id)
+                ->where('step', Approval::STEP_APPROVE)
+                ->first();
+            if (!$existingApproval) {
+                Approval::create([
+                    'request_id'  => $request->id,
+                    'approver_id' => $actor->id,
+                    'step'        => Approval::STEP_APPROVE,
+                    'action'      => Approval::ACTION_APPROVE,
+                    'notes'       => $data['notes'] ?? null,
+                    'acted_at'    => now(),
+                ]);
+            }
 
-            $request->update(['status' => Request::STATUS_APPROVED]);
-            event(new RequestStatusChanged($request, Request::STATUS_VERIFIED, Request::STATUS_APPROVED, $actor));
-
-            return $request->fresh();
+            event(new RequestStatusChanged(
+                $request->fresh(),
+                ProcurementRequest::STATUS_VERIFIED,      // from
+                ProcurementRequest::STATUS_APPROVED,  // to
+                $actor
+            ));
         });
+
+        // 4. Cek ketersediaan stok setelah APPROVED
+        //    - Semua stok tersedia  → otomatis READY
+        //    - Ada stok tidak cukup → otomatis IN_PROCUREMENT
+        $allAvailable = $this->checkAndMarkStockAvailability(
+            $request->fresh()->load('items.stock'),
+            $actor
+        );
+
+        if (!$allAvailable) {
+            DB::transaction(function () use ($request, $actor) {
+                $this->setCurrentUser($actor);
+
+                $request->update([
+                    'status' => ProcurementRequest::STATUS_IN_PROCUREMENT,
+                ]);
+
+                event(new RequestStatusChanged(
+                    $request->fresh(),
+                    ProcurementRequest::STATUS_APPROVED,      // from
+                    ProcurementRequest::STATUS_IN_PROCUREMENT,  // to
+                    $actor
+                ));
+            });
+        }
+
+        return $request->fresh()->load('items', 'requester', 'department');
     }
 
     // ── Reject ────────────────────────────────────────────────
-    public function reject(Request $request, User $actor, array $data): Request
+    public function reject(ProcurementRequest $request, User $actor, array $data): ProcurementRequest
     {
         $this->assertVersion($request, $data['version']);
 
         // Reject allowed from SUBMITTED or VERIFIED
-        if (!in_array($request->status, [Request::STATUS_SUBMITTED, Request::STATUS_VERIFIED])) {
+        if (!in_array($request->status, [ProcurementRequest::STATUS_SUBMITTED, ProcurementRequest::STATUS_VERIFIED])) {
             throw new UnprocessableEntityHttpException('Request cannot be rejected from status: '.$request->status);
         }
 
-        $step = $request->status === Request::STATUS_SUBMITTED
+        $step = $request->status === ProcurementRequest::STATUS_SUBMITTED
             ? Approval::STEP_VERIFY
             : Approval::STEP_APPROVE;
 
@@ -153,18 +206,18 @@ class RequestService
                 'acted_at' => now(),
             ]);
 
-            $request->update(['status' => Request::STATUS_REJECTED]);
-            event(new RequestStatusChanged($request, $request->status, Request::STATUS_REJECTED, $actor, $data['reason']));
+            $request->update(['status' => ProcurementRequest::STATUS_REJECTED]);
+            event(new RequestStatusChanged($request, $request->status, ProcurementRequest::STATUS_REJECTED, $actor, $data['reason']));
 
             return $request->fresh();
         });
     }
 
     // ── Procure ───────────────────────────────────────────────
-    public function procure(Request $request, User $actor, array $data): ProcurementOrder
+    public function procure(ProcurementRequest $request, User $actor, array $data): ProcurementOrder
     {
         $this->assertVersion($request, $data['version']);
-        $this->assertTransition($request, Request::STATUS_IN_PROCUREMENT);
+        $this->assertTransition($request, ProcurementRequest::STATUS_IN_PROCUREMENT);
 
         return DB::transaction(function () use ($request, $actor, $data) {
             $this->setCurrentUser($actor);
@@ -191,15 +244,15 @@ class RequestService
             }
 
             $po->update(['total_amount' => $total]);
-            $request->update(['status' => Request::STATUS_IN_PROCUREMENT]);
-            event(new RequestStatusChanged($request, Request::STATUS_APPROVED, Request::STATUS_IN_PROCUREMENT, $actor));
+            $request->update(['status' => ProcurementRequest::STATUS_IN_PROCUREMENT]);
+            event(new RequestStatusChanged($request, ProcurementRequest::STATUS_APPROVED, ProcurementRequest::STATUS_IN_PROCUREMENT, $actor));
 
             return $po->load('items', 'vendor', 'request');
         });
     }
-
+    
     // ── Check stock availability (called after APPROVED) ──────
-    public function checkAndMarkStockAvailability(Request $request, User $actor): bool
+    public function checkAndMarkStockAvailability(ProcurementRequest $request, User $actor): bool
     {
         $allAvailable = true;
 
@@ -234,8 +287,8 @@ class RequestService
                     }
                 }
 
-                $request->update(['status' => Request::STATUS_READY]);
-                event(new RequestStatusChanged($request, Request::STATUS_APPROVED, Request::STATUS_READY, $actor));
+                $request->update(['status' => ProcurementRequest::STATUS_READY]);
+                event(new RequestStatusChanged($request, ProcurementRequest::STATUS_APPROVED, ProcurementRequest::STATUS_READY, $actor));
             });
         }
 
@@ -243,7 +296,7 @@ class RequestService
     }
 
     // ── Helpers ───────────────────────────────────────────────
-    private function assertVersion(Request $request, int $version): void
+    private function assertVersion(ProcurementRequest $request, int $version): void
     {
         if ($request->version !== $version) {
             throw new ConflictHttpException(
@@ -252,7 +305,7 @@ class RequestService
         }
     }
 
-    private function assertTransition(Request $request, string $to): void
+    private function assertTransition(ProcurementRequest $request, string $to): void
     {
         if (!$request->canTransitionTo($to)) {
             throw new UnprocessableEntityHttpException(
@@ -261,7 +314,7 @@ class RequestService
         }
     }
 
-    private function findOrFailPendingApproval(Request $request, int $step): Approval
+    private function findOrFailPendingApproval(ProcurementRequest $request, int $step): Approval
     {
         $approval = $request->approvals()
             ->where('step', $step)
@@ -284,7 +337,7 @@ class RequestService
     private function generateNumber(): string
     {
         $year  = now()->year;
-        $count = Request::withTrashed()->whereYear('created_at', $year)->count() + 1;
+        $count = ProcurementRequest::withTrashed()->whereYear('created_at', $year)->count() + 1;
         return sprintf('REQ-%d-%06d', $year, $count);
     }
 
@@ -303,5 +356,62 @@ class RequestService
     private function findManagerUser(): User
     {
         return User::where('role', User::ROLE_PURCHASING_MANAGER)->where('is_active', true)->firstOrFail();
+    }
+
+    public function receive(ProcurementRequest $request, User $actor, array $data): ProcurementRequest
+    {
+        if ($request->version !== $data['version']) {
+            throw new ConflictHttpException('Data telah diubah. Silakan refresh dan coba lagi.');
+        }
+
+        if (!$request->canTransitionTo(ProcurementRequest::STATUS_READY)) {
+            throw new UnprocessableEntityHttpException(
+                "Tidak bisa receive dari status {$request->status}. Status harus IN_PROCUREMENT."
+            );
+        }
+
+        DB::statement("SET LOCAL app.current_user_id = '{$actor->id}'");
+
+        $request->update([
+            'status' => ProcurementRequest::STATUS_READY,
+        ]);
+
+        event(new RequestStatusChanged(
+                $request->fresh(),
+                ProcurementRequest::STATUS_IN_PROCUREMENT,      // from
+                ProcurementRequest::STATUS_READY,  // to
+                $actor
+            ));
+
+        return $request->fresh()->load('items', 'requester', 'department');
+    }
+
+    public function complete(ProcurementRequest $request, User $actor, array $data): ProcurementRequest
+    {
+        if ($request->version !== $data['version']) {
+            throw new ConflictHttpException('Data telah diubah. Silakan refresh dan coba lagi.');
+        }
+
+        if (!$request->canTransitionTo(ProcurementRequest::STATUS_COMPLETED)) {
+            throw new UnprocessableEntityHttpException(
+                "Tidak bisa complete dari status {$request->status}. Status harus READY."
+            );
+        }
+
+        DB::statement("SET LOCAL app.current_user_id = '{$actor->id}'");
+
+        $request->update([
+            'status'       => ProcurementRequest::STATUS_COMPLETED,
+            'completed_at' => now(),
+        ]);
+
+        event(new RequestStatusChanged(
+                $request->fresh(),
+                ProcurementRequest::STATUS_READY,      // from
+                ProcurementRequest::STATUS_COMPLETED,  // to
+                $actor
+            ));
+
+        return $request->fresh()->load('items', 'requester', 'department');
     }
 }

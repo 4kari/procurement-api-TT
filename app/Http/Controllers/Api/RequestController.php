@@ -14,9 +14,11 @@ use App\Services\RequestService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 
 class RequestController extends Controller
 {
+    use AuthorizesRequests;
     public function __construct(private readonly RequestService $service) {}
 
     /**
@@ -110,20 +112,19 @@ class RequestController extends Controller
      */
     public function approve(ApproveRequestRequest $request, string $id): JsonResponse
     {
-        $req = ProcurementRequest::findOrFail($id);
+        $req     = ProcurementRequest::findOrFail($id);
+        $this->authorize('approve', $req);
 
-        // Manager approves; Purchasing verifies (step 1 handled via /verify)
         $updated = $this->service->approve($req, $request->user(), $request->validated());
-
-        // After approval, check stock availability automatically
-        $stockAvailable = $this->service->checkAndMarkStockAvailability($updated->fresh(), $request->user());
 
         return response()->json([
             'success' => true,
-            'data'    => new RequestResource($updated->fresh()),
-            'message' => $stockAvailable
-                ? 'Request diapprove. Stok tersedia, status diubah ke READY.'
-                : 'Request diapprove. Stok tidak tersedia, lanjutkan ke pengadaan.',
+            'data'    => new RequestResource($updated),
+            'message' => match($updated->status) {
+                ProcurementRequest::STATUS_READY          => 'Diapprove. Stok tersedia — status READY.',
+                ProcurementRequest::STATUS_IN_PROCUREMENT => 'Diapprove. Stok tidak tersedia — perlu pengadaan.',
+                default                                   => 'Diapprove.',
+            },
         ]);
     }
 
@@ -175,6 +176,49 @@ class RequestController extends Controller
             'data'    => new ProcurementOrderResource($po),
             'message' => 'Purchase Order berhasil dibuat',
         ], 201);
+    }
+
+    /**
+     * POST /api/v1/requests/{id}/receive
+     * IN_PROCUREMENT → READY (barang dari vendor sudah diterima)
+     */
+    public function receive(Request $request, string $id): JsonResponse
+    {
+        $req  = ProcurementRequest::findOrFail($id);
+        $this->authorize('receive', $req);
+
+        $data    = $request->validate([
+            'version' => ['required', 'integer'],
+            'notes'   => ['nullable', 'string', 'max:500'],
+        ]);
+        $updated = $this->service->receive($req, $request->user(), $data);
+
+        return response()->json([
+            'success' => true,
+            'data'    => new RequestResource($updated),
+            'message' => 'Barang diterima dari vendor, status diubah ke READY',
+        ]);
+    }
+
+    /**
+     * POST /api/v1/requests/{id}/complete — Warehouse
+     */
+    public function complete(Request $request, string $id): JsonResponse
+    {
+        $req  = ProcurementRequest::findOrFail($id);
+        $this->authorize('complete', $req);
+
+        $data    = $request->validate([
+            'version' => ['required', 'integer'],
+            'notes'   => ['nullable', 'string', 'max:500'],
+        ]);
+        $updated = $this->service->complete($req, $request->user(), $data);
+
+        return response()->json([
+            'success' => true,
+            'data'    => new RequestResource($updated),
+            'message' => 'Request selesai, barang sudah diserahkan ke pemohon',
+        ]);
     }
 
     /**
