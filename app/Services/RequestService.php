@@ -257,6 +257,13 @@ class RequestService
         $allAvailable = true;
 
         foreach ($request->items as $item) {
+            \Log::info('Cek stok item', [
+                'item_name'   => $item->item_name,
+                'stock_id'    => $item->stock_id,
+                'qty_needed'  => $item->quantity,
+                'stock_qty'   => $item->stock?->quantity,
+                'stock_avail' => $item->stock?->availableQty(),
+            ]);
             if (!$item->stock_id) {
                 $allAvailable = false;
                 break;
