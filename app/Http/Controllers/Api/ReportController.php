@@ -84,16 +84,19 @@ class ReportController extends Controller
                 COUNT(*)                                                    AS total_selesai,
                 ROUND(AVG(
                     EXTRACT(EPOCH FROM (completed_at - submitted_at)) / 3600
-                ), 2)                                                       AS avg_jam,
-                ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (
+                )::NUMERIC, 2)                                          AS avg_jam,
+
+                ROUND((PERCENTILE_CONT(0.5) WITHIN GROUP (
                     ORDER BY EXTRACT(EPOCH FROM (completed_at - submitted_at)) / 3600
-                ), 2)                                                       AS median_jam,
+                ))::NUMERIC, 2)                                         AS median_jam,
+
                 ROUND(MIN(
                     EXTRACT(EPOCH FROM (completed_at - submitted_at)) / 3600
-                ), 2)                                                       AS min_jam,
+                )::NUMERIC, 2)                                          AS min_jam,
+
                 ROUND(MAX(
                     EXTRACT(EPOCH FROM (completed_at - submitted_at)) / 3600
-                ), 2)                                                       AS max_jam
+                )::NUMERIC, 2)                                          AS max_jam
             FROM requests
             WHERE status       = 'COMPLETED'
               AND submitted_at  IS NOT NULL
