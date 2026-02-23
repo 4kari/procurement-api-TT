@@ -48,10 +48,11 @@ class AuthController extends Controller
      */
     public function logout(Request $request): JsonResponse
     {
-        $token = str_replace('Bearer ', '', $request->header('Authorization', ''));
-        $this->authService->logout($token);
-
-        return response()->json(['success' => true, 'message' => 'Logout berhasil']);
+        $request->user()->currentAccessToken()->delete();
+        return response()->json([
+            'success' => true,
+            'message' => 'Logout berhasil',
+        ]);
     }
 
     /**
